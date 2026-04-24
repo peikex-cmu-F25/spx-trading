@@ -1,0 +1,174 @@
+# ===================================================================
+# SPX 0DTE Scanner — 全局参数配置
+# 所有阈值集中在此,严禁在代码中硬编码
+# ===================================================================
+
+# ---------- 时间框架 ----------
+timeframe:
+  primary: "3min"           # 主分析周期
+  secondary: ["1min", "15min"]  # 辅助(精细入场 / 大结构过滤)
+  session_start: "09:30"
+  session_end: "16:00"
+  timezone: "US/Eastern"
+
+# ---------- 数据 ----------
+data:
+  symbol: "SPY"             # 分析基准(有量)
+  option_underlying: "SPX"  # 信号映射到 SPX 期权
+  path: "data/spy_1min.parquet"
+  events_file: "data/events.csv"  # FOMC/CPI/OPEX 事件日历
+
+# ---------- 样本切分 ----------
+split:
+  train_pct: 0.70
+  val_pct: 0.15
+  test_pct: 0.15            # 最后 15% 严格不参与调参
+
+# ---------- 特征参数 ----------
+features:
+  # 结构
+  structure:
+    resistance_lookback_bars: 60
+    min_touches: 3
+    touch_tolerance_pct: 0.001    # 0.1% 视为同一价位
+    orb_duration_bars: 10         # 3min × 10 = 30min
+
+  # 趋势
+  trend:
+    ema_periods: [9, 21, 50, 200]
+    compression_lookback: 50
+    compression_pctile: 0.20      # EMA 粘合定义
+
+  # 波动率
+  volatility:
+    bb_period: 20
+    bb_std: 2
+    squeeze_pctile: 0.20          # BB 宽度 <20分位 = 压缩
+    squeeze_duration_bars: 5
+    bb_width_history_bars: 400    # 约 5 个交易日
+
+  # 量能
+  volume:
+    rvol_lookback_days: 20        # 按 time-of-day 平均
+    rvol_high_threshold: 1.5
+    rvol_surge_threshold: 2.0
+    rvol_low_threshold: 1.3
+
+  # 动量
+  momentum:
+    rsi_period: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+
+  # Regime
+  regime:
+    vix_low: 15
+    vix_high: 20
+    session_segments:
+      open:   ["09:30", "10:30"]
+      midday: ["10:30", "14:30"]
+      close:  ["14:30", "16:00"]
+
+# ---------- Pattern 参数 ----------
+patterns:
+
+  failed_breakout:
+    enabled: true
+    lookback_bars: 60
+    min_touches: 3
+    touch_tolerance_pct: 0.001
+    breakout_window_bars: 10
+    rvol_threshold: 1.3
+    squeeze_pctile: 0.30
+    default_hold_min: 15
+    stop_buffer_pct: 0.002        # 止损在阻力位外 0.2%
+    confidence_weights:
+      base: 0.50
+      many_touches: 0.10          # touches >= 4
+      high_volume: 0.10           # rvol > 2.0
+      deep_squeeze: 0.10          # bb_pctile < 0.15
+      trend_confirm: 0.10         # consec_same_dir >= 2
+      below_ema50: 0.10
+
+  squeeze_release:
+    enabled: true
+    squeeze_duration_bars: 5
+    bb_width_pctile_max: 0.20
+    rvol_threshold: 1.5
+    atr_ratio_max: 0.7
+    default_hold_min: 20
+    stop_buffer_atr: 1.0          # 止损 = 入场 ± 1 ATR
+
+  orb_breakout:
+    enabled: true
+    orb_duration_min: 30
+    rvol_threshold: 1.3
+    orb_size_min_pctile: 0.20     # ORB 太小则忽略
+    orb_size_max_pctile: 0.95     # ORB 过大降低 confidence
+    require_close_outside_range: true
+    default_hold_min: 20
+    stop_at_orb_midpoint: true
+
+  vwap_rejection:
+    enabled: true
+    prior_bars_one_side: 5        # 先持续在一侧
+    upper_wick_ratio: 0.5         # 上/下影线占比阈值
+    rvol_threshold: 1.2
+    require_ema21_aligned: true
+    default_hold_min: 10
+    stop_buffer_pct: 0.0015
+
+  liquidity_sweep:
+    enabled: true
+    sweep_levels:
+      - "pdh"
+      - "pdl"
+      - "orb_high"
+      - "orb_low"
+      - "prior_hour_high"
+      - "prior_hour_low"
+    wick_ratio: 0.6
+    rvol_threshold: 1.5
+    default_hold_min: 15
+    stop_buffer_pct: 0.002
+
+  last_hour_drift:
+    enabled: true
+    trigger_after_minute: 300     # 09:30 + 300min = 14:30
+    max_counter_trend_bars: 3
+    require_vwap_alignment: true
+    default_hold_min: 30
+    force_exit_minutes_before_close: 15  # 15:45 强平
+
+# ---------- 回测 ----------
+backtest:
+  entry:
+    execution_bar_offset: 1       # t+1 open 入场
+    slippage_bps: 1.0             # 1 bps = 0.01%
+    commission_per_trade_usd: 1.0
+
+  exit_strategies:
+    - "fixed_time"
+    - "target_stop"
+    - "trailing_atr"
+
+  trailing_atr_multiplier: 1.0
+
+  # 信号过滤
+  min_confidence: 0.5
+  min_samples_per_pattern: 30     # 少于此数标为统计不足
+
+# ---------- 期权映射(v2) ----------
+option_mapping:
+  enabled: false                  # v2 开启
+  model: "black_scholes"
+  iv_source: "vix"                # 简化:用 VIX 作为 IV 代理
+  strike_selection: "atm"
+  multiplier: 10                  # SPY → SPX 换算系数
+
+# ---------- 仪表板 ----------
+dashboard:
+  default_date_range_days: 30
+  min_confidence_default: 0.6
+  patterns_enabled_default: ["failed_breakout", "orb_breakout"]
